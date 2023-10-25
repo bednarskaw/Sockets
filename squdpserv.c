@@ -18,36 +18,51 @@
 
 char *prog_name;
 
-void usage() {
+void usage()
+{
     printf("usage: %s [-p <port>]\n", prog_name);
     printf("\t-p <port> specify alternate port\n");
 }
 
-int main(int argc, char* argv[]) {
+int square(int number)
+{
+    return number * number;
+}
+
+int main(int argc, char *argv[])
+{
 
     long port = DEFAULT_PORT;
-    struct sockaddr_in sin;
-    int fd;
+    struct sockaddr_in sin, cliaddr;
+    int fd, newsockfd;
     socklen_t sin_len;
-    size_t  data_len;
+    size_t data_len;
     ssize_t len;
     char *data, *end;
     long ch;
+    int queueLength = 5;
 
     /* get options and arguments */
     prog_name = strdup(basename(argv[0]));
-    while ((ch = getopt(argc, argv, "?hp:")) != -1) {
-        switch (ch) {
-            case 'p': port = strtol(optarg, (char **)NULL, 10);break;
-            case 'h':
-            case '?':
-            default: usage(); return 0;
+    while ((ch = getopt(argc, argv, "?hp:")) != -1)
+    {
+        switch (ch)
+        {
+        case 'p':
+            port = strtol(optarg, (char **)NULL, 10);
+            break;
+        case 'h':
+        case '?':
+        default:
+            usage();
+            return 0;
         }
     }
     argc -= optind;
     argv += optind;
 
-    if (argc != 0) {
+    if (argc != 0)
+    {
         usage();
         return EX_USAGE;
     }
@@ -56,13 +71,15 @@ int main(int argc, char* argv[]) {
 
     /* get room for data */
     data_len = BUFFER_SIZE;
-    if ((data = (char *) malloc(data_len)) < 0) {
+    if ((data = (char *)malloc(data_len)) < 0)
+    {
         err(EX_SOFTWARE, "in malloc");
     }
 
     /* create and bind a socket */
-    fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (fd < 0) {
+    fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+    {
         free(data);
         err(EX_SOFTWARE, "in socket");
     }
@@ -72,18 +89,30 @@ int main(int argc, char* argv[]) {
     sin.sin_addr.s_addr = INADDR_ANY; // rather memcpy to sin.sin_addr
     sin.sin_port = htons(port);
 
-    if (bind(fd, (struct sockaddr *) &sin, sizeof(sin)) < 0) {
+    if (bind(fd, (struct sockaddr *)&sin, sizeof(sin)) < 0)
+    {
         free(data);
         close(fd);
         err(EX_SOFTWARE, "in bind");
     }
+    // tell OS to receive and queue SYN packet
+    listen(fd, queueLength);
+    socklen_t clilen = sizeof(cliaddr);
 
+    // accept connection and create new socket
+    newsockfd = accept(fd, (struct sockaddr *)&cliaddr, &clilen);
+
+    if (newsockfd < 0)
+        err(EX_SOFTWARE, "ERROR on accept");
     /* receive data */
     sin_len = sizeof(sin);
-    len = recvfrom(fd, data, data_len, 0, (struct sockaddr *)&sin, &sin_len);
-    if (len < 0) {
+    // len = receive(z, data, data_len, 0);
+    len = recvfrom(newsockfd, data, data_len, 0, (struct sockaddr *)&sin, &sin_len);
+    if (len < 0)
+    {
         free(data);
         close(fd);
+        close(newsockfd);
         err(EX_SOFTWARE, "in recvfrom");
     }
 
@@ -91,18 +120,27 @@ int main(int argc, char* argv[]) {
 
     ch = strtol(data, &end, 10);
 
-    switch (errno) {
-        case EINVAL: err(EX_DATAERR, "not an integer");
-        case ERANGE: err(EX_DATAERR, "out of range");
-        default: if (ch == 0 && data == end) errx(EX_DATAERR, "no value");  // Linux returns 0 if no numerical value was given
+    switch (errno)
+    {
+    case EINVAL:
+        err(EX_DATAERR, "not an integer");
+    case ERANGE:
+        err(EX_DATAERR, "out of range");
+    default:
+        if (ch == 0 && data == end)
+            errx(EX_DATAERR, "no value"); // Linux returns 0 if no numerical value was given
     }
 
     /* send data */
-    printf("integer value: %ld\n", ch);
-
+    printf("Received value: %ld\n", ch);
+    int result = square(ch);
+    snprintf(data, data_len, "%i", result);
+    // sendto(newsockfd, data, strlen(data), 0, (const struct sockaddr *)&sin, sin_len);
+    send(newsockfd, data, strlen(data), 0);
     /* cleanup */
     free(data);
+    close(newsockfd);
     close(fd);
-
+    printf("Socked closed\n");
     return EX_OK;
 }
